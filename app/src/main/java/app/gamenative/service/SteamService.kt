@@ -444,17 +444,35 @@ class SteamService : Service(), IChallengeUrlChanged {
             get() = Paths.get(DownloadService.baseDataDirPath, "Steam", "steamapps", "common").pathString
 
         /**
-         * Root used when "use external storage" is enabled. On legacy this is whatever the
-         * user picked in settings (SD card / USB). On modern we force the primary external
-         * app-scoped dir (/storage/emulated/0/Android/data/<pkg>/files) so no permission
-         * is needed. Falls back to the configured path if for some reason the primary
-         * external app dir isn't available yet (e.g. before populateDownloadService runs).
+         * Root used when "use external storage" is enabled.
+         *
+         * Priority is the volume the user explicitly picked in Settings > Storage Volume.
+         * That picker stores an app-scoped dir returned by getExternalFilesDirs()
+         * (e.g. /storage/XXXX-XXXX/Android/data/<pkg>/files), which is writable on every
+         * API level without any runtime permission — including on modern (API 29+). So we
+         * honor it on both flavors instead of silently redirecting the install elsewhere.
+         *
+         * Previously the modern flavor ignored the user's choice and always forced the
+         * primary external dir (/storage/emulated/0/Android/data/<pkg>/files). That made
+         * selecting an SD card / USB volume a no-op: the game was written to internal
+         * emulated storage regardless, which then stalls a large download (e.g. DMC5) once
+         * primary storage fills up. See fix/external-storage-modern-volume.
+         *
+         * We only fall back to the primary external app dir (modern) or leave the raw
+         * configured path (legacy) when the selected volume isn't usable yet — e.g. it was
+         * unmounted, or populateDownloadService() hasn't run.
          */
         private val externalAppInstallRoot: String
-            get() = if (BuildConfig.MODERN_ANDROID && DownloadService.baseExternalAppDirPath.isNotBlank()) {
-                DownloadService.baseExternalAppDirPath + "/files"
-            } else {
-                PrefManager.externalStoragePath
+            get() {
+                val selected = PrefManager.externalStoragePath
+                if (selected.isNotBlank() && File(selected).let { it.exists() && it.canWrite() }) {
+                    return selected
+                }
+                return if (BuildConfig.MODERN_ANDROID && DownloadService.baseExternalAppDirPath.isNotBlank()) {
+                    DownloadService.baseExternalAppDirPath + "/files"
+                } else {
+                    selected
+                }
             }
 
         val externalAppInstallPath: String
